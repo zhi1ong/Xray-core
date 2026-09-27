@@ -32,6 +32,21 @@ func Record(msg Message) {
 	logHandler.Handle(msg)
 }
 
+// AccessEnabled reports whether the current handler accepts access messages.
+// Custom handlers without this optional method retain their existing behavior.
+func AccessEnabled() bool {
+	logHandler.RLock()
+	defer logHandler.RUnlock()
+
+	if logHandler.Handler == nil {
+		return false
+	}
+	if h, ok := logHandler.Handler.(interface{ AccessEnabled() bool }); ok {
+		return h.AccessEnabled()
+	}
+	return true
+}
+
 var logHandler syncHandler
 
 // RegisterHandler registers a new handler as current log handler. Previous registered handler will be discarded.
