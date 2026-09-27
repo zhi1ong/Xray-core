@@ -194,20 +194,25 @@ func (d *DefaultDispatcher) getLink(ctx context.Context) (*transport.Link, *tran
 }
 
 func WrapLink(ctx context.Context, policyManager policy.Manager, statsManager stats.Manager, link *transport.Link) *transport.Link {
+	return wrapLink(ctx, policyManager, statsManager, link, nil)
+}
+
+func wrapLink(ctx context.Context, policyManager policy.Manager, statsManager stats.Manager, link *transport.Link, traffic *accessTraffic) *transport.Link {
 	sessionInbound := session.InboundFromContext(ctx)
 	var user *protocol.MemoryUser
 	if sessionInbound != nil {
 		user = sessionInbound.User
 	}
 
-	link.Reader = &buf.TimeoutWrapperReader{Reader: link.Reader}
+	reader := &buf.TimeoutWrapperReader{Reader: link.Reader}
+	link.Reader = reader
 
 	if user != nil && len(user.Email) > 0 {
 		p := policyManager.ForLevel(user.Level)
 		if p.Stats.UserUplink {
 			name := "user>>>" + user.Email + ">>>traffic>>>uplink"
 			if c, _ := statsManager.GetOrRegisterCounter(name); c != nil {
-				link.Reader.(*buf.TimeoutWrapperReader).Counter = c
+				reader.Counter = c
 			}
 		}
 		if p.Stats.UserDownlink {
@@ -224,6 +229,10 @@ func WrapLink(ctx context.Context, policyManager policy.Manager, statsManager st
 		}
 	}
 
+	if traffic != nil {
+		traffic.up.user, reader.Counter = reader.Counter, &traffic.up
+		link.Writer = traffic.down.wrap(link.Writer)
+	}
 	return link
 }
 
@@ -344,13 +353,8 @@ func (d *DefaultDispatcher) DispatchLink(ctx context.Context, destination net.De
 		content = new(session.Content)
 		ctx = session.ContextWithContent(ctx, content)
 	}
-	outbound = WrapLink(ctx, d.policy, d.stats, outbound)
 	traffic := newAccessTraffic(ctx)
-	if traffic != nil {
-		reader := outbound.Reader.(*buf.TimeoutWrapperReader)
-		traffic.up.user, reader.Counter = reader.Counter, &traffic.up
-		outbound.Writer = traffic.down.wrap(outbound.Writer)
-	}
+	outbound = wrapLink(ctx, d.policy, d.stats, outbound, traffic)
 	sniffingRequest := content.SniffingRequest
 	if !sniffingRequest.Enabled {
 		d.routedDispatch(ctx, outbound, destination, traffic)

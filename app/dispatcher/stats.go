@@ -64,19 +64,13 @@ func newAccessTraffic(ctx context.Context) *accessTraffic {
 }
 
 // record takes a diagnostic snapshot at teardown. It does not wait for I/O
-// still unwinding after an error. Pipe links may outlive Dispatch (Mux).
+// still unwinding after an error. Pipe links may outlive handler.Dispatch (Mux),
+// and blocking is fine there because Dispatch runs routedDispatch in a goroutine.
 func (t *accessTraffic) record(message log.AccessMessage) {
-	write := func() {
-		message.Uplink, message.Downlink = t.up.Value(), t.down.Value()
-		log.Record(&message)
-	}
-	if t.upDone == nil {
-		write()
-		return
-	}
-	go func() {
+	if t.upDone != nil {
 		<-t.upDone
 		<-t.downDone
-		write()
-	}()
+	}
+	message.Uplink, message.Downlink = t.up.Value(), t.down.Value()
+	log.Record(&message)
 }
